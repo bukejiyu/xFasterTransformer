@@ -18,12 +18,14 @@
 
 namespace xft {
 
-void invokeLayerLLaMA(DataType dt, ActivationType at, NormType nt, int batchSize, int inputSeqLen, int attHeadDim,
-        int attHeadNum, int kvHeadNum, int maxPositions, int maxPosEmbed, int pastSeqLen, int currentSeqLen, int step,
-        int hiddenSize, int intermediateSize, void *output, int outputStride, const void *input, int inputStride,
-        const float *ln1Gamma, const float *ln1Beta, const void *queryWeight, const void *keyWeight,
-        const void *valueWeight, const void *attnOutWeight, const float *ln2Gamma, const float *ln2Beta,
-        const void *gateWeight, const void *upWeight, const void *downWeight, const float *queryBias = nullptr,
-        const float *keyBias = nullptr, const float *valueBias = nullptr, const float *attnOutBias = nullptr);
+void invokeLayerLLaMA(DataType dt, ActivationType at, NormType nt, int layerId, int totalLayers, int batchSize,
+        int inputSeqLen, int attHeadDim, int attHeadNum, int kvHeadNum, int maxPositions, int maxPosEmbed,
+        int pastSeqLen, int currentSeqLen, int step, int hiddenSize, int intermediateSize, void *output,
+        int outputStride, const void *input, int inputStride, const float *ln1Gamma, const float *ln1Beta,
+        const void *queryWeight, const void *keyWeight, const void *valueWeight, const void *attnOutWeight,
+        const float *ln2Gamma, const float *ln2Beta, const void *gateWeight, const void *upWeight,
+        const void *downWeight, const float *queryBias = nullptr, const float *keyBias = nullptr,
+        const float *valueBias = nullptr, const float *attnOutBias = nullptr, const void *myqkvWeight = nullptr,
+        const float *gateBias = nullptr, const float *upBias = nullptr, const float *downBias = nullptr);
 
 } // namespace xft

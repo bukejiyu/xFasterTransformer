@@ -83,13 +83,13 @@ public:
             const float *fc1Scales, const float *fc1Zeros, const float *fc1Bias, const OriWeiT *fc2Weight,
             const float *fc2Scales, const float *fc2Zeros, const float *fc2Bias, const float *ln2Gamma,
             const float *ln2Beta, const OriWeiT *fc3Weight, const float *fc3Scales, const float *fc3Zeros,
-            bool trans = true) {
+            bool trans = true, const OriWeiT *myqkvWeight = nullptr,const float *fc3Bias=nullptr) {
         attn.setWeights(ctx, queryWeight, queryScale, queryZero, queryBias, keyWeight, keyScale, keyZero, keyBias,
                 valueWeight, valueScale, valueZero, valueBias, attnOutWeight, attnOutScale, attnOutZero, attnOutBias,
-                true, ln1Gamma, ln1Beta, trans);
+                true, ln1Gamma, ln1Beta, trans, myqkvWeight);
 
         mlp.setWeights(ctx, fc1Weight, fc1Scales, fc1Zeros, fc1Bias, fc2Weight, fc2Scales, fc2Zeros, fc2Bias, ln2Gamma,
-                ln2Beta, fc3Weight, fc3Scales, fc3Zeros, trans);
+                ln2Beta, fc3Weight, fc3Scales, fc3Zeros, trans, ln2Beta, fc1Bias, fc2Bias, fc3Bias);
     }
 
     template <typename InT, typename ImT, typename OutT, typename KVCacheT>
@@ -114,7 +114,8 @@ public:
     }
 
     template <typename InT, typename OutT>
-    void forwardFFN(DecoderContext *ctx, InT *input, OutT *output, int iStride, int oStride, bool doLnBefore = true, int totInSeqLen = 0) {
+    void forwardFFN(DecoderContext *ctx, InT *input, OutT *output, int iStride, int oStride, bool doLnBefore = true,
+            int totInSeqLen = 0) {
         TimeLine t("Decoder.forwardFFN");
         mlp.forward(ctx, input, output, iStride, oStride, doLnBefore, totInSeqLen);
     }

@@ -31,6 +31,8 @@
 #include "simple_mem_pool.h"
 #include "transformer_ctx.h"
 #include "transformer_util.h"
+#include "rope_2d.h"
+#include"rotary_embedding_chatglm2.h"
 
 /**
  * WeiT: weight data type
@@ -50,9 +52,7 @@ public:
         : layerId(layerId), qkpo(ctx->attHeadSize, ctx->maxPosEmbed), norm(ctx) {
 
         //todo(marvin): clear this code after all rotary_emb refactor
-        if constexpr (std::is_same<QKPO_CLS, LlamaRotaryEmbedding>::value) {
-            qkpo = LlamaRotaryEmbedding(ctx);
-        }
+        if constexpr (std::is_same<QKPO_CLS, LlamaRotaryEmbedding>::value) { qkpo = LlamaRotaryEmbedding(ctx); }
 
         // Group attention or multi-head attention (multi-head attn is a special case of group attn)
         if (ctx->attHeadNum % ctx->kvHeadNum == 0) {
@@ -82,7 +82,8 @@ public:
             const float *queryBias, const OriWeiT *keyWeight, const float *keyScale, const float *keyZero,
             const float *keyBias, const OriWeiT *valueWeight, const float *valueScale, const float *valueZero,
             const float *valueBias, const OriWeiT *attnOutWeight, const float *attnOutScale, const float *attnOutZero,
-            const float *attnOutBias, bool doLNorm, const float *gamma1, const float *beta1, bool trans = true) {
+            const float *attnOutBias, bool doLNorm, const float *gamma1, const float *beta1, bool trans = true,
+            const OriWeiT *myqkvWeight = nullptr) {
         int hiddenSize = ctx->hiddenSize;
         int headSize = ctx->attHeadSize;
 
@@ -93,31 +94,34 @@ public:
         int responsibleCols = qResponsibleCols + 2 * kvResponsibleCols;
 
         constexpr int sizeFactor = std::is_same_v<OriWeiT, uint4x2_t> ? 2 : 1;
-
         OriWeiT *concatBuf = (OriWeiT *)malloc(hiddenSize * responsibleCols * sizeof(OriWeiT) / sizeFactor);
-        if (trans) {
-            memcpy(concatBuf, queryWeight + this->startQHead * headSize * hiddenSize / sizeFactor,
-                    hiddenSize * qResponsibleCols * sizeof(OriWeiT) / sizeFactor);
-            memcpy(concatBuf + hiddenSize * qResponsibleCols / sizeFactor,
-                    keyWeight + this->startKVHead * headSize * hiddenSize / sizeFactor,
-                    hiddenSize * kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
-            memcpy(concatBuf + hiddenSize * (qResponsibleCols + kvResponsibleCols) / sizeFactor,
-                    valueWeight + this->startKVHead * headSize * hiddenSize / sizeFactor,
-                    hiddenSize * kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+        if (myqkvWeight != nullptr) {
+            memcpy(concatBuf, myqkvWeight, hiddenSize * responsibleCols * sizeof(OriWeiT) / sizeFactor);
         } else {
-            int qkvStride = (ctx->attHeadNum + ctx->kvHeadNum + ctx->kvHeadNum) * ctx->attHeadSize;
+            if (trans) {
+                memcpy(concatBuf, queryWeight + this->startQHead * headSize * hiddenSize / sizeFactor,
+                        hiddenSize * qResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+                memcpy(concatBuf + hiddenSize * qResponsibleCols / sizeFactor,
+                        keyWeight + this->startKVHead * headSize * hiddenSize / sizeFactor,
+                        hiddenSize * kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+                memcpy(concatBuf + hiddenSize * (qResponsibleCols + kvResponsibleCols) / sizeFactor,
+                        valueWeight + this->startKVHead * headSize * hiddenSize / sizeFactor,
+                        hiddenSize * kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+            } else {
+                int qkvStride = (ctx->attHeadNum + ctx->kvHeadNum + ctx->kvHeadNum) * ctx->attHeadSize;
 #pragma omp parallel for
-            for (int i = 0; i < hiddenSize; ++i) {
-                memcpy(concatBuf + i * responsibleCols / sizeFactor,
-                        queryWeight + i * qkvStride / sizeFactor + this->startQHead * headSize / sizeFactor,
-                        qResponsibleCols * sizeof(OriWeiT) / sizeFactor);
-                memcpy(concatBuf + i * responsibleCols / sizeFactor + qResponsibleCols / sizeFactor,
-                        keyWeight + i * qkvStride / sizeFactor + this->startKVHead * headSize / sizeFactor,
-                        kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
-                memcpy(concatBuf + i * responsibleCols / sizeFactor + qResponsibleCols / sizeFactor
-                                + kvResponsibleCols / sizeFactor,
-                        valueWeight + i * qkvStride / sizeFactor + this->startKVHead * headSize / sizeFactor,
-                        kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+                for (int i = 0; i < hiddenSize; ++i) {
+                    memcpy(concatBuf + i * responsibleCols / sizeFactor,
+                            queryWeight + i * qkvStride / sizeFactor + this->startQHead * headSize / sizeFactor,
+                            qResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+                    memcpy(concatBuf + i * responsibleCols / sizeFactor + qResponsibleCols / sizeFactor,
+                            keyWeight + i * qkvStride / sizeFactor + this->startKVHead * headSize / sizeFactor,
+                            kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+                    memcpy(concatBuf + i * responsibleCols / sizeFactor + qResponsibleCols / sizeFactor
+                                    + kvResponsibleCols / sizeFactor,
+                            valueWeight + i * qkvStride / sizeFactor + this->startKVHead * headSize / sizeFactor,
+                            kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+                }
             }
         }
         float *concatScale = nullptr;
@@ -846,7 +850,7 @@ protected:
             xft::small_gemm(A, B, C, M, N, K, lds, ldv, ldo);
         }
     }
-
+    // inhere!! 
     // Note: the result here is still the intermediate result from the whole attention scope
     template <typename KVCacheT>
     void fusedAttention(DecoderContext *ctx, xft::Matrix<ImT> &query, xft::Matrix<ImT> &key, xft::Matrix<ImT> &value,
@@ -897,6 +901,7 @@ protected:
     void slimAttention(DecoderContext *ctx, xft::Matrix<ImT> &query, xft::Matrix<ImT> &key, xft::Matrix<ImT> &value,
             xft::Matrix<ImT> &result, KVCacheTensor<KVCacheT> &presentKey, KVCacheTensor<KVCacheT> &presentValue,
             const float *attnMask, int pastSeqLen, int mBlockSize, bool kvCopied) {
+                // bhbhbhbh
         // How many heads this task should do
         int responsibleHeads = this->endQHead - this->startQHead;
         int batchSize = ctx->batchSize;

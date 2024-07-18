@@ -31,10 +31,8 @@ LlamaRotaryEmbedding::LlamaRotaryEmbedding(DecoderContext *ctx) {
     if (this->rope_type == "linear") ctx->GetAttr("scaling_factor", &this->scaling_factor, 1.0f);
 
     inv_freq_size = (dim + 1) / 2;
-
     emb_cos = ctx->getBuffer<float>(emb_cos_str, max_position_embeddings * inv_freq_size);
     emb_sin = ctx->getBuffer<float>(emb_sin_str, max_position_embeddings * inv_freq_size);
-
     if (!ctx->cached(inv_freq_str)) {
         inv_freq = ctx->getBuffer<float>(inv_freq_str, inv_freq_size);
 
@@ -48,7 +46,7 @@ LlamaRotaryEmbedding::LlamaRotaryEmbedding(DecoderContext *ctx) {
         exit(-1);
     }
 
-#ifdef XFT_GPU
+    #ifdef XFT_GPU
     if (this->device != nullptr) {
         float *emb_cos_bak = emb_cos;
         float *emb_sin_bak = emb_sin;
@@ -138,7 +136,7 @@ void LlamaRotaryEmbedding::forward(
     const int kHeads = qkShape[4];
     const int heads = std::max(qHeads, kHeads);
     const int half = inv_freq_size;
-
+   
     // for (size_t i = 0; i < emb_size; i++) {
     //     emb[i] = x[i] * emb_cos[position_ids[i % cached_size / dim]][i % dim];
     //     int offset = (i % dim + inv_freq_size) % dim;

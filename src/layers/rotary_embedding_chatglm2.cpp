@@ -95,7 +95,7 @@ void ChatGLM2RotaryEmbedding::forward(
     const int seq_len = qk_shape[1];
     const int head_num = qk_shape[2] + qk_shape[4];
     const int half = inv_freq_size;
-
+    // query 包含 
 #pragma omp parallel for
     for (int head = 0; head < head_num; ++head) {
         int off = head * dim;

@@ -32,7 +32,8 @@ public:
     void setWeights(DecoderContext *ctx, const OriWeiT *_imWeight, const float * /*unused*/, const float * /*unused*/,
             const float *_imBias, const OriWeiT *_outputWeight, const float * /*unused*/, const float * /*unused*/,
             const float *_outputBias, const float *_gamma2, const float *_beta2, const OriWeiT * /*unused*/,
-            const float * /*unused*/, const float * /*unused*/, bool trans = true) {
+            const float * /*unused*/, const float * /*unused*/, bool trans = true, const float *normB = nullptr,
+            const float *gateB = nullptr, const float *upB = nullptr, const float *downB = nullptr) {
         int hiddenSize = ctx->hiddenSize;
         int intermediateSize = ctx->intermediateSize;
 

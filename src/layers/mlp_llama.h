@@ -45,7 +45,8 @@ public:
     void setWeights(DecoderContext *ctx, const OriWeiT *gateW, const float *gateS, const float *gateZ,
             const float * /*unused*/, const OriWeiT *upW, const float *upS, const float *upZ, const float * /*unused*/,
             const float *normW, const float * /*unused*/, const OriWeiT *downW, const float *downS, const float *downZ,
-            bool trans = true) {
+            bool trans = true, const float *normB = nullptr, const float *gateB = nullptr, const float *upB = nullptr,
+            const float *downB = nullptr) {
         int hiddenSize = ctx->hiddenSize;
         int imSize = ctx->intermediateSize;
 
@@ -67,6 +68,22 @@ public:
             upWeight.Resize(hiddenSize, it.second - it.first);
             ctx->mmHelper->packWeight(trans, quantizedGateWeight, gateWeight);
             ctx->mmHelper->packWeight(trans, quantizedUpWeight, upWeight);
+            // if (gateB) {
+            //     this->gateBias.Resize(imSize);
+            //     if (ctx->splitIdx == 0) {
+            //         memcpy(this->gateBias.Data(), gateB, sizeof(float) * imSize);
+            //     } else { // For other splits, set bias to 0, to avoid duplicated calculation
+            //         memset(this->gateBias.Data(), 0, sizeof(float) * imSize);
+            //     }
+            // }
+            // if (upB) {
+            //     this->upBias.Resize(imSize);
+            //     if (ctx->splitIdx == 0) {
+            //         memcpy(this->upBias.Data(), upB, sizeof(float) * imSize);
+            //     } else { // For other splits, set bias to 0, to avoid duplicated calculation
+            //         memset(this->upBias.Data(), 0, sizeof(float) * imSize);
+            //     }
+            // }
         } else {
             xft::Matrix<WeiT> quantizedCatWeights;
             catGateUpWeights(quantizedGateWeight, quantizedUpWeight, gateWeightScale, gateWeightZero, gateWeightSum,
@@ -90,9 +107,23 @@ public:
             ctx->mmHelper->packWeight(trans, quantizedCatWeights, catWeights);
 #endif
         }
+
         // Horizontally split the down weight
         ctx->mmHelper->convertWeight(ctx, trans, imSize, hiddenSize, downW, downS, downZ, false, quantizedDownWeight,
                 downWeightScale, downWeightZero, downWeightSum);
+        if (gateB && upB) {
+            this->gateupBias.Resize(2 * imSize);
+            memcpy(this->gateupBias.Data(), gateB, sizeof(float) * imSize);
+            memcpy(this->gateupBias.Data() + imSize, upB, sizeof(float) * imSize);
+        }
+        if (downB) {
+            this->downBias.Resize(hiddenSize);
+            if (ctx->splitIdx == 0) {
+                memcpy(this->downBias.Data(), downB, sizeof(float) * hiddenSize);
+            } else { // For other splits, set bias to 0, to avoid duplicated calculation
+                memset(this->downBias.Data(), 0, sizeof(float) * hiddenSize);
+            }
+        }
 #ifdef XFT_GPU
         xft::Matrix<WeiT> downWeightT;
         int downWeiRows = it.second - it.first;
@@ -120,7 +151,7 @@ public:
 #endif
 
         // LlamaRMSNorm
-        if (normW) { norm.setWeight(normW, nullptr, hiddenSize); }
+        if (normW) { norm.setWeight(normW, normB, hiddenSize); }
     }
 
 #ifdef XFT_DEBUG
@@ -285,8 +316,10 @@ private:
         const InT *R = residential.Data();
 
         if (isMaster) {
+            float *downbias = this->downBias.Data();
+            if (this->downBias.Size() == 0) { downbias = nullptr; }
             ctx->mmHelper->compute_residential(
-                    false, M, N, K, 1.0f, A, lda, B, scaleB, zeroB, sumB, 0.0f, C, ldc, NULL, R, ldr);
+                    false, M, N, K, 1.0f, A, lda, B, scaleB, zeroB, sumB, 0.0f, C, ldc, downbias, R, ldr);
         } else {
             ctx->mmHelper->compute(false, M, N, K, 1.0f, A, lda, B, scaleB, zeroB, sumB, 0.0f, C, ldc);
         }
@@ -309,8 +342,12 @@ private:
         const float *zeroB = catWeightsZero.Data();
         const float *sumB = catWeightsSum.Data();
         T2 *C = output.Data();
-
-        ctx->mmHelper->compute(false, M, N, K, 1.0f, A, lda, B, scaleB, zeroB, sumB, 0.0f, C, ldc);
+        if (this->gateupBias.Size() == 0) {
+            ctx->mmHelper->compute(false, M, N, K, 1.0f, A, lda, B, scaleB, zeroB, sumB, 0.0f, C, ldc);
+        } else {
+            ctx->mmHelper->compute_bias(
+                    false, M, N, K, 1.0f, A, lda, B, scaleB, zeroB, sumB, 0.0f, C, ldc, this->gateupBias.Data());
+        }
 
         // Compute silu on the left half and then add it with the right half
         if (ctx->actType == DecoderContext::SILU) {
@@ -318,7 +355,7 @@ private:
         } else if (ctx->actType == DecoderContext::SWIGLU) { // chatglm2/3
             DecoderUtil::siluSum(output, siluBuf, ctx->device);
         } else if (ctx->actType == DecoderContext::GELU) { // gemma
-            DecoderUtil::geluSum(output, siluBuf,  ctx->device);
+            DecoderUtil::geluSum(output, siluBuf, ctx->device);
         } else {
             printf("ERROR: unsupported activation in MLP.\n");
             exit(-1);
@@ -378,6 +415,10 @@ protected:
     xft::Vector<float> downWeightScale; // For int8_t weight
     xft::Vector<float> downWeightZero; // For int8_t weight
     xft::Vector<float> downWeightSum; // For int8_t weight
+    xft::Vector<float> gateBias;
+    xft::Vector<float> upBias;
+    xft::Vector<float> downBias;
+    xft::Vector<float> gateupBias;
 
     // LlamaRMSNorm param
     NORM_CLS norm;
