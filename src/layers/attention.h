@@ -81,7 +81,8 @@ public:
             const float *queryBias, const OriWeiT *keyWeight, const float *keyScale, const float *keyZero,
             const float *keyBias, const OriWeiT *valueWeight, const float *valueScale, const float *valueZero,
             const float *valueBias, const OriWeiT *attnOutWeight, const float *attnOutScale, const float *attnOutZero,
-            const float *attnOutBias, bool doLNorm, const float *gamma1, const float *beta1, bool trans = true) {
+            const float *attnOutBias, bool doLNorm, const float *gamma1, const float *beta1, bool trans = true,
+            const OriWeiT *myqkvWeight = nullptr) {
         int hiddenSize = ctx->hiddenSize;
         int headSize = ctx->attHeadSize;
 
@@ -94,29 +95,33 @@ public:
         constexpr int sizeFactor = std::is_same_v<OriWeiT, uint4x2_t> ? 2 : 1;
 
         OriWeiT *concatBuf = (OriWeiT *)malloc(hiddenSize * responsibleCols * sizeof(OriWeiT) / sizeFactor);
-        if (trans) {
-            memcpy(concatBuf, queryWeight + this->startQHead * headSize * hiddenSize / sizeFactor,
-                    hiddenSize * qResponsibleCols * sizeof(OriWeiT) / sizeFactor);
-            memcpy(concatBuf + hiddenSize * qResponsibleCols / sizeFactor,
-                    keyWeight + this->startKVHead * headSize * hiddenSize / sizeFactor,
-                    hiddenSize * kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
-            memcpy(concatBuf + hiddenSize * (qResponsibleCols + kvResponsibleCols) / sizeFactor,
-                    valueWeight + this->startKVHead * headSize * hiddenSize / sizeFactor,
-                    hiddenSize * kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+        if (myqkvWeight != nullptr) {
+            memcpy(concatBuf, myqkvWeight, hiddenSize * responsibleCols * sizeof(OriWeiT) / sizeFactor);
         } else {
-            int qkvStride = (ctx->attHeadNum + ctx->kvHeadNum + ctx->kvHeadNum) * ctx->attHeadSize;
+            if (trans) {
+                memcpy(concatBuf, queryWeight + this->startQHead * headSize * hiddenSize / sizeFactor,
+                        hiddenSize * qResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+                memcpy(concatBuf + hiddenSize * qResponsibleCols / sizeFactor,
+                        keyWeight + this->startKVHead * headSize * hiddenSize / sizeFactor,
+                        hiddenSize * kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+                memcpy(concatBuf + hiddenSize * (qResponsibleCols + kvResponsibleCols) / sizeFactor,
+                        valueWeight + this->startKVHead * headSize * hiddenSize / sizeFactor,
+                        hiddenSize * kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+            } else {
+                int qkvStride = (ctx->attHeadNum + ctx->kvHeadNum + ctx->kvHeadNum) * ctx->attHeadSize;
 #pragma omp parallel for
-            for (int i = 0; i < hiddenSize; ++i) {
-                memcpy(concatBuf + i * responsibleCols / sizeFactor,
-                        queryWeight + i * qkvStride / sizeFactor + this->startQHead * headSize / sizeFactor,
-                        qResponsibleCols * sizeof(OriWeiT) / sizeFactor);
-                memcpy(concatBuf + i * responsibleCols / sizeFactor + qResponsibleCols / sizeFactor,
-                        keyWeight + i * qkvStride / sizeFactor + this->startKVHead * headSize / sizeFactor,
-                        kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
-                memcpy(concatBuf + i * responsibleCols / sizeFactor + qResponsibleCols / sizeFactor
-                                + kvResponsibleCols / sizeFactor,
-                        valueWeight + i * qkvStride / sizeFactor + this->startKVHead * headSize / sizeFactor,
-                        kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+                for (int i = 0; i < hiddenSize; ++i) {
+                    memcpy(concatBuf + i * responsibleCols / sizeFactor,
+                            queryWeight + i * qkvStride / sizeFactor + this->startQHead * headSize / sizeFactor,
+                            qResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+                    memcpy(concatBuf + i * responsibleCols / sizeFactor + qResponsibleCols / sizeFactor,
+                            keyWeight + i * qkvStride / sizeFactor + this->startKVHead * headSize / sizeFactor,
+                            kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+                    memcpy(concatBuf + i * responsibleCols / sizeFactor + qResponsibleCols / sizeFactor
+                                    + kvResponsibleCols / sizeFactor,
+                            valueWeight + i * qkvStride / sizeFactor + this->startKVHead * headSize / sizeFactor,
+                            kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+                }
             }
         }
         float *concatScale = nullptr;
@@ -663,9 +668,8 @@ public:
 
 protected:
     template <typename T, typename KVCacheT>
-    void selfAttention16bits(DecoderContext *ctx, xft::Matrix<T> &query, xft::Matrix<T> &key,
-            xft::Matrix<T> &value, xft::Matrix<T> &result, KVCacheTensor<KVCacheT> &presentKey,
-            KVCacheTensor<KVCacheT> &presentValue) {
+    void selfAttention16bits(DecoderContext *ctx, xft::Matrix<T> &query, xft::Matrix<T> &key, xft::Matrix<T> &value,
+            xft::Matrix<T> &result, KVCacheTensor<KVCacheT> &presentKey, KVCacheTensor<KVCacheT> &presentValue) {
         int responsibleQHeads = this->endQHead - this->startQHead;
         int responsibleKVHeads = this->endKVHead - this->startKVHead;
 
@@ -683,10 +687,9 @@ protected:
     }
 
     template <typename T, typename KVCacheT>
-    void selfAttention16bits(DecoderContext *ctx, xft::Matrix<T> &query, xft::Matrix<T> &key,
-            xft::Matrix<T> &value, xft::Matrix<T> &result,
-            std::vector<KVCacheTensor<KVCacheT> *> &keyCaches, std::vector<KVCacheTensor<KVCacheT> *> &valueCaches,
-            std::vector<xft::SequenceMeta *> &seqs) {
+    void selfAttention16bits(DecoderContext *ctx, xft::Matrix<T> &query, xft::Matrix<T> &key, xft::Matrix<T> &value,
+            xft::Matrix<T> &result, std::vector<KVCacheTensor<KVCacheT> *> &keyCaches,
+            std::vector<KVCacheTensor<KVCacheT> *> &valueCaches, std::vector<xft::SequenceMeta *> &seqs) {
         int responsibleQHeads = this->endQHead - this->startQHead;
         int responsibleKVHeads = this->endKVHead - this->startKVHead;
 
