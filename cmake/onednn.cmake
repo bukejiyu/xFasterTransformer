@@ -36,10 +36,11 @@ if(NOT EXISTS ${ONEDNN_3rdparty_DIR})
     ExternalProject_Add(onednn
       GIT_REPOSITORY    https://github.com/oneapi-src/oneDNN.git
       GIT_TAG           v3.5
+      TIMEOUT           600
       SOURCE_DIR        ${ONEDNN_3rdparty_DIR}
       BINARY_DIR        ${ONEDNN_3rdparty_DIR}
       CONFIGURE_COMMAND ${CMAKE_COMMAND} -E make_directory "build" && ${CMAKE_COMMAND} -E chdir "build" ${CMAKE_COMMAND} ${ONEDNN_BUILD_OPTIONS} ..
-      BUILD_COMMAND     ${CMAKE_COMMAND} -E chdir "build" make -j all
+      BUILD_COMMAND     ${CMAKE_COMMAND} -E chdir "build" make -j24  all
       INSTALL_COMMAND   ""
       TEST_COMMAND      ""
     )

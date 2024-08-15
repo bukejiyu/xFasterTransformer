@@ -26,6 +26,7 @@
 #include "kvcache_tensor.h"
 #include "matmul_helper.h"
 #include "rms_norm.h"
+#include "rope_2d.h"
 #include "rotary_embedding.h"
 #include "rotary_embedding_chatglm2.h"
 #include "sequence.h"
@@ -84,7 +85,8 @@ public:
             const float *queryBias, const OriWeiT *keyWeight, const float *keyScale, const float *keyZero,
             const float *keyBias, const OriWeiT *valueWeight, const float *valueScale, const float *valueZero,
             const float *valueBias, const OriWeiT *attnOutWeight, const float *attnOutScale, const float *attnOutZero,
-            const float *attnOutBias, bool doLNorm, const float *gamma1, const float *beta1, bool trans = true) {
+            const float *attnOutBias, bool doLNorm, const float *gamma1, const float *beta1, bool trans = true,
+            const OriWeiT *myqkvWeight = nullptr, const float *myqkvBias = nullptr) {
         int hiddenSize = ctx->hiddenSize;
         int headSize = ctx->attHeadSize;
 
@@ -95,31 +97,34 @@ public:
         int responsibleCols = qResponsibleCols + 2 * kvResponsibleCols;
 
         constexpr int sizeFactor = std::is_same_v<OriWeiT, uint4x2_t> ? 2 : 1;
-
         OriWeiT *concatBuf = (OriWeiT *)malloc(hiddenSize * responsibleCols * sizeof(OriWeiT) / sizeFactor);
-        if (trans) {
-            memcpy(concatBuf, queryWeight + this->startQHead * headSize * hiddenSize / sizeFactor,
-                    hiddenSize * qResponsibleCols * sizeof(OriWeiT) / sizeFactor);
-            memcpy(concatBuf + hiddenSize * qResponsibleCols / sizeFactor,
-                    keyWeight + this->startKVHead * headSize * hiddenSize / sizeFactor,
-                    hiddenSize * kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
-            memcpy(concatBuf + hiddenSize * (qResponsibleCols + kvResponsibleCols) / sizeFactor,
-                    valueWeight + this->startKVHead * headSize * hiddenSize / sizeFactor,
-                    hiddenSize * kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+        if (myqkvWeight != nullptr) {
+            memcpy(concatBuf, myqkvWeight, hiddenSize * responsibleCols * sizeof(OriWeiT) / sizeFactor);
         } else {
-            int qkvStride = (ctx->attHeadNum + ctx->kvHeadNum + ctx->kvHeadNum) * ctx->attHeadSize;
+            if (trans) {
+                memcpy(concatBuf, queryWeight + this->startQHead * headSize * hiddenSize / sizeFactor,
+                        hiddenSize * qResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+                memcpy(concatBuf + hiddenSize * qResponsibleCols / sizeFactor,
+                        keyWeight + this->startKVHead * headSize * hiddenSize / sizeFactor,
+                        hiddenSize * kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+                memcpy(concatBuf + hiddenSize * (qResponsibleCols + kvResponsibleCols) / sizeFactor,
+                        valueWeight + this->startKVHead * headSize * hiddenSize / sizeFactor,
+                        hiddenSize * kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+            } else {
+                int qkvStride = (ctx->attHeadNum + ctx->kvHeadNum + ctx->kvHeadNum) * ctx->attHeadSize;
 #pragma omp parallel for
-            for (int i = 0; i < hiddenSize; ++i) {
-                memcpy(concatBuf + i * responsibleCols / sizeFactor,
-                        queryWeight + i * qkvStride / sizeFactor + this->startQHead * headSize / sizeFactor,
-                        qResponsibleCols * sizeof(OriWeiT) / sizeFactor);
-                memcpy(concatBuf + i * responsibleCols / sizeFactor + qResponsibleCols / sizeFactor,
-                        keyWeight + i * qkvStride / sizeFactor + this->startKVHead * headSize / sizeFactor,
-                        kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
-                memcpy(concatBuf + i * responsibleCols / sizeFactor + qResponsibleCols / sizeFactor
-                                + kvResponsibleCols / sizeFactor,
-                        valueWeight + i * qkvStride / sizeFactor + this->startKVHead * headSize / sizeFactor,
-                        kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+                for (int i = 0; i < hiddenSize; ++i) {
+                    memcpy(concatBuf + i * responsibleCols / sizeFactor,
+                            queryWeight + i * qkvStride / sizeFactor + this->startQHead * headSize / sizeFactor,
+                            qResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+                    memcpy(concatBuf + i * responsibleCols / sizeFactor + qResponsibleCols / sizeFactor,
+                            keyWeight + i * qkvStride / sizeFactor + this->startKVHead * headSize / sizeFactor,
+                            kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+                    memcpy(concatBuf + i * responsibleCols / sizeFactor + qResponsibleCols / sizeFactor
+                                    + kvResponsibleCols / sizeFactor,
+                            valueWeight + i * qkvStride / sizeFactor + this->startKVHead * headSize / sizeFactor,
+                            kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+                }
             }
         }
         float *concatScale = nullptr;
@@ -160,6 +165,21 @@ public:
         free(concatScale);
         free(concatZero);
 
+        // Merged bias
+        if (myqkvBias != nullptr) {
+            qkvBias.Resize(responsibleCols);
+            memcpy(qkvBias.Data(), myqkvBias, sizeof(float) * responsibleCols);
+        } else {
+            if (queryBias && keyBias && valueBias) {
+                qkvBias.Resize(responsibleCols);
+                memcpy(qkvBias.Data(), queryBias + ctx->splitIdx * qResponsibleCols, sizeof(float) * qResponsibleCols);
+                memcpy(qkvBias.Data() + qResponsibleCols, keyBias + this->startKVHead * headSize,
+                        sizeof(float) * kvResponsibleCols);
+                memcpy(qkvBias.Data() + qResponsibleCols + kvResponsibleCols, valueBias + this->startKVHead * headSize,
+                        sizeof(float) * kvResponsibleCols);
+            }
+        }
+
 #ifdef XFT_DEBUG
         dbg.debugPrint("attention qkv weight: [%d, %d] (%d)\n", convertedqkvWeight.Rows(), convertedqkvWeight.Cols(),
                 convertedqkvWeight.Stride());
@@ -167,6 +187,8 @@ public:
         dbg.debugPrint(
                 "attention qkv packed weight: [%d, %d] (%d)\n", qkvWeight.Rows(), qkvWeight.Cols(), qkvWeight.Stride());
         dbg.dumpMatrix(qkvWeight, false, ctx->device);
+        dbg.debugPrint("attention qkv bias : [%d] (%d)\n", qkvBias.Size(), qkvBias.Size());
+        dbg.dumpMatrix(qkvBias.Data(), 1, qkvBias.Size(), qkvBias.Size(), false, ctx->device);
 #endif
 
         // Merged bias
@@ -178,7 +200,6 @@ public:
             memcpy(qkvBias.Data() + qResponsibleCols + kvResponsibleCols, valueBias + this->startKVHead * headSize,
                     sizeof(float) * kvResponsibleCols);
         }
-
         // Weights for attention output
         // Horizontally split the weight, as the source (PyTorch weight) is transposed, thus looks like vertically
         xft::Matrix<WeiT> convertedOutWeight;
@@ -295,6 +316,7 @@ public:
                     imBuffer.Stride(), qkvWeight.Data(), qkvWeightScale.Data(), qkvWeightZero.Data(),
                     qkvWeightSum.Data(), 0.0f, qkvGroupMatMul.Data(), qkvGroupMatMul.Stride());
         } else {
+            // printf("hello?");
             ctx->mmHelper->compute_bias(false, imBuffer.Rows(), qkvWeight.Cols(), imBuffer.Cols(), 1.0f,
                     imBuffer.Data(), imBuffer.Stride(), qkvWeight.Data(), qkvWeightScale.Data(), qkvWeightZero.Data(),
                     qkvWeightSum.Data(), 0.0f, qkvGroupMatMul.Data(), qkvGroupMatMul.Stride(), qkvBias.Data());
@@ -892,7 +914,7 @@ protected:
             xft::small_gemm(A, B, C, M, N, K, lds, ldv, ldo);
         }
     }
-
+    
     // Note: the result here is still the intermediate result from the whole attention scope
     template <typename KVCacheT>
     void fusedAttention(DecoderContext *ctx, xft::Matrix<ImT> &query, xft::Matrix<ImT> &key, xft::Matrix<ImT> &value,

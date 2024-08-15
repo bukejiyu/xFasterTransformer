@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 // ============================================================================
-#include "layers_rotary_embedding.h"
-#include "compile_util.h"
 #include "bfloat16.h"
+#include "compile_util.h"
+#include "layers_rotary_embedding.h"
 namespace xft {
 
 void rotaryEmbeddingKernel(const int64_t *positionIds, float *query, float *key, const float *embCos,
@@ -37,14 +37,16 @@ void rotaryEmbeddingKernel(const int64_t *positionIds, float *query, float *key,
 
 #pragma omp simd
             for (int i = 0; i < half; ++i) {
-                auto t1 = p1[i];
-                auto t2 = p2[i];
-
-                p1[i] = p1[i] * pcos[i] - p1[i + half] * psin[i];
-                p2[i] = p2[i] * pcos[i] - p2[i + half] * psin[i];
-
-                p1[i + half] = p1[i + half] * pcos[i + half] + t1 * psin[i + half];
-                p2[i + half] = p2[i + half] * pcos[i + half] + t2 * psin[i + half];
+                if (head < headNum) {
+                    auto t1 = p1[i];
+                    p1[i] = p1[i] * pcos[i] - p1[i + half] * psin[i];
+                    p1[i + half] = p1[i + half] * pcos[i + half] + t1 * psin[i + half];
+                }
+                if (head < numKvHeads) {
+                    auto t2 = p2[i];
+                    p2[i] = p2[i] * pcos[i] - p2[i + half] * psin[i];
+                    p2[i + half] = p2[i + half] * pcos[i + half] + t2 * psin[i + half];
+                }
             }
         }
     }

@@ -48,7 +48,11 @@ void LayerNorm::setWeight(const float *gamma, const float *beta, int cols) {
     this->gamma = (float *)xft::alloc(cols * sizeof(float), device);
     this->beta = (float *)xft::alloc(cols * sizeof(float), device);
     xft::memcopy(this->gamma, gamma, cols * sizeof(float), device);
-    xft::memcopy(this->beta, beta, cols * sizeof(float), device);
+    if (beta==nullptr){
+        xft::memsetv(this->beta, 0, cols * sizeof(float), device);
+    }else{
+        xft::memcopy(this->beta, beta, cols * sizeof(float), device);
+    }
 }
 
 void LayerNorm::setWeight(const std::string &gammaPath, const std::string &betaPath, int cols) {

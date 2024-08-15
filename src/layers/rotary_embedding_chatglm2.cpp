@@ -88,11 +88,15 @@ void ChatGLM2RotaryEmbedding::glm2CalEmb(const float *inv_freq) {
             float tmp = i * inv_freq[j];
             float cos_tmp = std::cos(tmp);
             float sin_tmp = std::sin(tmp);
-
-            pcos[j] = cos_tmp;
-            pcos[j + inv_freq_size] = cos_tmp;
-            psin[j] = sin_tmp;
-            psin[j + inv_freq_size] = sin_tmp;
+            
+            pcos[2*j] = cos_tmp;
+            pcos[2*j + 1] = cos_tmp;
+            psin[2*j] = sin_tmp;
+            psin[2*j + 1] = sin_tmp;
+            // pcos[j] = cos_tmp;
+            // pcos[j + inv_freq_size] = cos_tmp;
+            // psin[j] = sin_tmp;
+            // psin[j + inv_freq_size] = sin_tmp;
         }
     }
 }
@@ -125,7 +129,7 @@ void ChatGLM2RotaryEmbedding::forward(
     const int seq_len = qk_shape[1];
     const int head_num = qk_shape[2] + qk_shape[4];
     const int half = inv_freq_size;
-
+    // query 包含 
 #pragma omp parallel for
     for (int head = 0; head < head_num; ++head) {
         int off = head * dim;
@@ -138,10 +142,10 @@ void ChatGLM2RotaryEmbedding::forward(
                 float *psin = emb_sin + pos * dim;
 
 #pragma omp simd
-                for (int i = 0; i < half; i += 2) {
+                for (int i = 0; i < 2*half; i += 2) {
                     auto t1 = p1[i];
                     p1[i] = p1[i] * pcos[i] - p1[i + 1] * psin[i];
-                    p1[i + 1] = p1[i + 1] * pcos[i] + t1 * psin[i];
+                    p1[i + 1] = p1[i + 1] * pcos[i+1] + t1 * psin[i+1];
                 }
                 off += qStride;
             }

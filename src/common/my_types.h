@@ -218,11 +218,11 @@ private:
     uint64_t cols;
     uint64_t stride;
 
-    MatData<T> data;
 
     Matrix &operator=(const Matrix &m);
 
 public:
+    MatData<T> data;
     Matrix() {
         this->rows = 0;
         this->cols = 0;
@@ -328,11 +328,11 @@ public:
 template <typename T>
 class Vector {
 private:
-    T *data;
-    uint64_t size;
     uint64_t alloc_size;
 
 public:
+    T *data;
+    uint64_t size;
     Vector() {
         data = NULL;
         size = 0;
