@@ -134,12 +134,12 @@ struct MatData<T, true> {
     void Resize(uint64_t rows, uint64_t cols, uint64_t stride) {
         assert(!shadow);
         uint64_t size = rows * stride;
-        if (this->buf_alloc_size < size) {
-            if (buf) { xft_numa_free(buf, sizeof(T) * buf_alloc_size); }
-            this->buf_alloc_size = size;
-            buf = (T *)xft_numa_alloc(sizeof(T) * size);
-            if (buf == NULL) { throw std::bad_alloc(); }
-        }
+        // if (this->buf_alloc_size < size) {
+        //     if (buf) { xft_numa_free(buf, sizeof(T) * buf_alloc_size); }
+        //     this->buf_alloc_size = size;
+        //     buf = (T *)xft_numa_alloc(sizeof(T) * size);
+        //     if (buf == NULL) { throw std::bad_alloc(); }
+        // }
         // Check the scale and zero point buffer
         if ((this->qscheme == per_channel_symmetric || this->qscheme == per_channel_affine)
                 && this->qparam.per_c.alloc_size < rows) {
@@ -218,11 +218,11 @@ private:
     uint64_t cols;
     uint64_t stride;
 
-    MatData<T> data;
 
     Matrix &operator=(const Matrix &m);
 
 public:
+    MatData<T> data;
     Matrix() {
         this->rows = 0;
         this->cols = 0;
@@ -328,11 +328,11 @@ public:
 template <typename T>
 class Vector {
 private:
-    T *data;
-    uint64_t size;
     uint64_t alloc_size;
 
 public:
+    T *data;
+    uint64_t size;
     Vector() {
         data = NULL;
         size = 0;

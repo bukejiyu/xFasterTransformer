@@ -26,6 +26,6 @@ void invokeLayerLLaMA(DataType dt, ActivationType at, NormType nt, int layerId, 
         const float *ln2Gamma, const float *ln2Beta, const void *gateWeight, const void *upWeight,
         const void *downWeight, const float *queryBias = nullptr, const float *keyBias = nullptr,
         const float *valueBias = nullptr, const float *attnOutBias = nullptr, const void *myqkvWeight = nullptr,
-        const float *gateBias = nullptr, const float *upBias = nullptr, const float *downBias = nullptr);
+        const float *gateBias = nullptr, const float *upBias = nullptr, const float *downBias = nullptr,const float* myqkvBias=nullptr);
 
 } // namespace xft

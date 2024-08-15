@@ -102,7 +102,7 @@ public:
 
 #ifdef XFT_DEBUG
         dbg.debugPrint("layer norm after attention:\n");
-        dbg.dumpMatrix(imInput);
+        dbg.dumpMatrix(imInput, false, ctx->device);
 #endif
 
         // intermediate
@@ -113,7 +113,7 @@ public:
 
 #ifdef XFT_DEBUG
         dbg.debugPrint("intermediate:\n");
-        dbg.dumpMatrix(imBuffer);
+        dbg.dumpMatrix(imBuffer, false, ctx->device);
 #endif
 
         // dense in output
@@ -152,7 +152,7 @@ public:
 
 #ifdef XFT_DEBUG
         dbg.debugPrint("output:\n");
-        dbg.dumpMatrix(resultBuffer1);
+        dbg.dumpMatrix(resultBuffer1, false, ctx->device);
 #endif
 
         // layerNorm
@@ -160,7 +160,7 @@ public:
 
 #ifdef XFT_DEBUG
         dbg.debugPrint("final output:\n");
-        dbg.dumpMatrix(resultBuffer1);
+        dbg.dumpMatrix(resultBuffer1, false, ctx->device);
 #endif
     }
 

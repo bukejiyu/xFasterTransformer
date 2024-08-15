@@ -10,6 +10,6 @@ if [ ! -d "$dir" ]; then
         sed -i 's/cpu_gpu_dpcpp/./g' cmake/templates/oneCCLConfig.cmake.in
         mkdir build && cd build
         cmake ..
-        make -j install
+        make -j24 install
     fi
 fi

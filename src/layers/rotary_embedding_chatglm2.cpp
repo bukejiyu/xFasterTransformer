@@ -29,7 +29,6 @@ bool ChatGLM2RotaryEmbedding::initialized = false;
 ChatGLM2RotaryEmbedding::ChatGLM2RotaryEmbedding(const int dim, const int max_position_embeddings, const float base) {
     if (!initialized) {
         initialized = true;
-
         max_seq_len_cached = max_position_embeddings;
         inv_freq_size = (dim + 1) / 2;
         inv_freq = (float *)malloc(inv_freq_size * sizeof(float));
@@ -58,11 +57,15 @@ void ChatGLM2RotaryEmbedding::glm2CalEmb() {
             float tmp = i * inv_freq[j];
             float cos_tmp = std::cos(tmp);
             float sin_tmp = std::sin(tmp);
-
-            pcos[j] = cos_tmp;
-            pcos[j + inv_freq_size] = cos_tmp;
-            psin[j] = sin_tmp;
-            psin[j + inv_freq_size] = sin_tmp;
+            
+            pcos[2*j] = cos_tmp;
+            pcos[2*j + 1] = cos_tmp;
+            psin[2*j] = sin_tmp;
+            psin[2*j + 1] = sin_tmp;
+            // pcos[j] = cos_tmp;
+            // pcos[j + inv_freq_size] = cos_tmp;
+            // psin[j] = sin_tmp;
+            // psin[j + inv_freq_size] = sin_tmp;
         }
     }
 }
@@ -108,10 +111,10 @@ void ChatGLM2RotaryEmbedding::forward(
                 float *psin = emb_sin + pos * dim;
 
 #pragma omp simd
-                for (int i = 0; i < half; i += 2) {
+                for (int i = 0; i < 2*half; i += 2) {
                     auto t1 = p1[i];
                     p1[i] = p1[i] * pcos[i] - p1[i + 1] * psin[i];
-                    p1[i + 1] = p1[i + 1] * pcos[i] + t1 * psin[i];
+                    p1[i + 1] = p1[i + 1] * pcos[i+1] + t1 * psin[i+1];
                 }
                 off += qStride;
             }

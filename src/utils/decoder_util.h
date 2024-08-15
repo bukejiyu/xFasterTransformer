@@ -34,7 +34,6 @@
 
 extern int getFlashThresh();
 extern bool enableCATMLP();
-extern bool enableSkipMsk();
 
 class DecoderUtil {
 public:
@@ -337,6 +336,49 @@ public:
         }
     }
 
+    // General version
+    static void computeSoftmax(float16_t *data, float scale, int size) {
+        int vecs = (size + 15) / 16; // how many avx512 vectors
+        __mmask16 tailMask = (size % 16 == 0 ? 0xffff : (1 << (size % 16)) - 1); // mask of last vector
+
+        __m512 vsum = _mm512_set1_ps(0);
+
+        // maxVal is used to avoid exp(x) = inf
+        float maxVal = std::numeric_limits<float>::lowest();
+        __m512 vmax = _mm512_set1_ps(maxVal);
+        __m512 vfactor = _mm512_set1_ps(scale);
+
+        int i = 0;
+        for (i = 0; i < vecs; ++i) {
+            __mmask16 k = (i == vecs - 1 ? tailMask : 0xffff);
+            __m512 vx = xft::load_avx512(k, data + i * 16);
+            vmax = _mm512_mask_max_ps(vmax, k, vmax, vx * vfactor);
+        }
+
+        maxVal = _mm512_reduce_max_ps(vmax);
+        vmax = _mm512_set1_ps(maxVal);
+
+        // Compute vexp(vx - vmax) and sum it
+        for (i = 0; i < vecs; ++i) {
+            __mmask16 k = (i == vecs - 1 ? tailMask : 0xffff);
+            __m512 vx = xft::load_avx512(k, data + i * 16);
+            vx = BertUtil::vexp(vx * vfactor - vmax);
+            xft::store_avx512(data + i * 16, k, vx);
+            vsum = _mm512_mask_add_ps(vsum, k, vsum, vx);
+        }
+
+        float sum = _mm512_reduce_add_ps(vsum);
+        __m512 vrsum = _mm512_set1_ps(1.0f / sum);
+
+        // Compute exp/sum(exp) and store
+        for (i = 0; i < vecs; ++i) {
+            __mmask16 k = (i == vecs - 1 ? tailMask : 0xffff);
+            __m512 vx = xft::load_avx512(k, data + i * 16);
+            vx = vx * vrsum;
+            xft::store_avx512(data + i * 16, k, vx);
+        }
+    }
+
     // Softmax: skip the calculation when attention mask is the lowest value
     static void softmaxSkipMask(float *data, const float *attnMask, int size, float scale) {
         int vecs = (size + 15) / 16; // how many avx512 vectors
@@ -554,16 +596,31 @@ public:
 
             dnnl_sgemm(ta[0], tb[0], m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
 
-        } else if (std::is_same_v<T, bfloat16_t>) {
+        } else {
             CBLAS_TRANSPOSE ta, tb;
             ta = transa ? CblasTrans : CblasNoTrans;
             tb = transb ? CblasTrans : CblasNoTrans;
 
-            cblas_gemm_bf16bf16f32(CblasRowMajor, ta, tb, m, n, k, alpha, (const MKL_BF16 *)(A), lda,
-                    (const MKL_BF16 *)(B), ldb, beta, C, ldc);
-        } else {
-            printf("Datatype Not supported yet\n");
-            exit(-1);
+            if (std::is_same_v<T, bfloat16_t>) {
+                cblas_gemm_bf16bf16f32(CblasRowMajor, ta, tb, m, n, k, alpha, (const MKL_BF16 *)(A), lda,
+                        (const MKL_BF16 *)(B), ldb, beta, C, ldc);
+            } else if (std::is_same_v<T, float16_t>) {
+                static int mkl_enable_inst = -1;
+                if (mkl_enable_inst == -1) {
+#ifdef AMX_FP16_WEIGHT_ONLY_FP16
+                    // AMX FP16
+                    mkl_enable_inst = mkl_enable_instructions(MKL_ENABLE_AVX512_E5);
+#else
+                    // AVX512_FP16, skip E4 avoiding illegal instruction error
+                    mkl_enable_inst = mkl_enable_instructions(MKL_ENABLE_AVX512_E3);
+#endif
+                }
+                cblas_gemm_f16f16f32(CblasRowMajor, ta, tb, m, n, k, alpha, (const MKL_F16 *)(A), lda,
+                        (const MKL_F16 *)(B), ldb, beta, C, ldc);
+            } else {
+                printf("Datatype Not supported yet\n");
+                exit(-1);
+            }
         }
     }
 
@@ -805,14 +862,5 @@ public:
 
         sgemm((T *)AB, C, expABC, m, n, k, k, vStride, n, false, false);
         updateOutTile(output, expABC, preSum, sum, preMax, max, m, n, stride);
-    }
-
-    static bool skipMskAttn(const float *attnMask, int m, int n, int stride) {
-        float lowest = std::numeric_limits<float>::lowest();
-        // left bottom is lowest
-        if (attnMask[(m - 1) * stride] == lowest)
-            return true;
-        else
-            return false;
     }
 };

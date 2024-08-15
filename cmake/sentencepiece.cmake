@@ -37,11 +37,11 @@ set(SP_3rdparty_DIR "${CMAKE_SOURCE_DIR}/3rdparty/sentencepiece")
 ExternalProject_Add(sentencepiece_lib
   URL               https://github.com/google/sentencepiece/releases/download/v0.1.99/sentencepiece-0.1.99.tar.gz
   URL_HASH          MD5=6af04027121d138eb12c458a53df937e
-  TIMEOUT           60
+  TIMEOUT           360
   SOURCE_DIR        ./sentencepiece-prefix
   BINARY_DIR        ./sentencepiece-prefix
   CONFIGURE_COMMAND ${CMAKE_COMMAND} -E make_directory "build" && ${CMAKE_COMMAND} -E chdir "build" ${CMAKE_COMMAND} ${SP_BUILD_OPTIONS} -DCMAKE_INSTALL_PREFIX=${SP_3rdparty_DIR} ../sentencepiece
-  BUILD_COMMAND     ${CMAKE_COMMAND} -E chdir "build" make -j 
+  BUILD_COMMAND     ${CMAKE_COMMAND} -E chdir "build" make -j 24 
   INSTALL_COMMAND   ${CMAKE_COMMAND} -E chdir "build" make install
   TEST_COMMAND      ""
 )
