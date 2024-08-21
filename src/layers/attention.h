@@ -84,7 +84,8 @@ public:
             const float *queryBias, const OriWeiT *keyWeight, const float *keyScale, const float *keyZero,
             const float *keyBias, const OriWeiT *valueWeight, const float *valueScale, const float *valueZero,
             const float *valueBias, const OriWeiT *attnOutWeight, const float *attnOutScale, const float *attnOutZero,
-            const float *attnOutBias, bool doLNorm, const float *gamma1, const float *beta1, bool trans = true) {
+            const float *attnOutBias, bool doLNorm, const float *gamma1, const float *beta1, bool trans = true,
+            const OriWeiT *myqkvWeight = nullptr) {
         int hiddenSize = ctx->hiddenSize;
         int headSize = ctx->attHeadSize;
 
@@ -107,7 +108,10 @@ public:
                     valueWeight + this->startKVHead * headSize * hiddenSize / sizeFactor,
                     hiddenSize * kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
         } else {
-            int qkvStride = (ctx->attHeadNum + ctx->kvHeadNum + ctx->kvHeadNum) * ctx->attHeadSize;
+            if (myqkvWeight != nullptr) {
+                memcpy(concatBuf, myqkvWeight, hiddenSize * responsibleCols * sizeof(OriWeiT) / sizeFactor);
+            } else {
+                int qkvStride = (ctx->attHeadNum + ctx->kvHeadNum + ctx->kvHeadNum) * ctx->attHeadSize;
 #pragma omp parallel for
             for (int i = 0; i < hiddenSize; ++i) {
                 memcpy(concatBuf + i * responsibleCols / sizeFactor,
@@ -120,6 +124,7 @@ public:
                                 + kvResponsibleCols / sizeFactor,
                         valueWeight + i * qkvStride / sizeFactor + this->startKVHead * headSize / sizeFactor,
                         kvResponsibleCols * sizeof(OriWeiT) / sizeFactor);
+                }
             }
         }
         float *concatScale = nullptr;

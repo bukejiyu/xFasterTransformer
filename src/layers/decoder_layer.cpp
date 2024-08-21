@@ -35,7 +35,7 @@ void LayerLLaMAImpl(DataType dt, ActivationType at, NormType nt, int batchSize, 
         const void *valueWeight, const void *attnOutWeight, const float *ln2Gamma, const float *ln2Beta,
         const void *gateWeight, const void *upWeight, const void *downWeight, const float *queryBias,
         const float *keyBias, const float *valueBias, const float *attnOutBias, 
-        MMHelper *mmHelper, DecoderContext *ctx, KVCacheManager<KVCacheT> *kvCacheMgr) {
+        MMHelper *mmHelper, DecoderContext *ctx, KVCacheManager<KVCacheT> *kvCacheMgr,const void *myqkvWeight = nullptr) {
 
     // TODO: will deprecate attention mask in future, so need to change this
     auto prepareAttnMask = [&](DecoderContext *ctx, int step) {
@@ -87,9 +87,9 @@ void LayerLLaMAImpl(DataType dt, ActivationType at, NormType nt, int batchSize, 
 
     using DECODER = Decoder<Attention<DataT, RopeT, NormT>, LlamaMLP<DataT>>;
     DECODER *llama_layer;
-    xft::Matrix<float> *actBuffers;
+    static xft::Matrix<float> actBuffers ;
     //static std::unordered_map<std::string, DECODER *> llama_layer_hub;
-    static std::unordered_map<std::string, std::tuple<DECODER*, xft::Matrix<float>*>> llama_layer_hub;
+    static std::unordered_map<std::string, std::tuple<DECODER*>> llama_layer_hub;
     // create hash key and value: if hidden and intermediateSize is changed , then memory pointer is also changed.
     std::stringstream weights_addr;
     weights_addr << queryWeight << "_" << keyWeight << "_" << valueWeight << "_" << attnOutWeight << "_" << gateWeight
@@ -110,18 +110,16 @@ void LayerLLaMAImpl(DataType dt, ActivationType at, NormType nt, int batchSize, 
                 nullptr, nullptr, keyBias, (const float *)valueWeight, nullptr, nullptr, valueBias,
                 (const float *)attnOutWeight, nullptr, nullptr, attnOutBias, ln1Gamma, ln1Beta,
                 (const float *)gateWeight, nullptr, nullptr, nullptr, (const float *)upWeight, nullptr, nullptr,
-                nullptr, ln2Gamma, ln2Beta, (const float *)downWeight, nullptr, nullptr, false);
+                nullptr, ln2Gamma, ln2Beta, (const float *)downWeight, nullptr, nullptr, false,(const float *)myqkvWeight);
 
-        actBuffers->Resize(batchSize * inputSeqLen * 2, hiddenSize);
 
-        llama_layer_hub[llama_layer_key] = std::make_tuple(llama_layer, actBuffers);;
-        printf(">> create llama_layer_key: %s\n", llama_layer_key.c_str());
+        llama_layer_hub[llama_layer_key] = std::make_tuple(llama_layer);;
+        // printf(">> create llama_layer_key: %s\n", llama_layer_key.c_str());
         xft_set_preferred_node(-1);
     } else {
         llama_layer = std::get<0>(it_created->second);
-        actBuffers = std::get<1>(it_created->second);
     }
-
+    actBuffers.Resize(batchSize * inputSeqLen * 2, hiddenSize);
     ctx->resize(batchSize, inputSeqLen, pastSeqLen);
     float *attnMask = prepareAttnMask(ctx, step);
 
@@ -130,7 +128,7 @@ void LayerLLaMAImpl(DataType dt, ActivationType at, NormType nt, int batchSize, 
 
     float *attnOut = (float *)(ctx->tmpBuf.Data());
 
-    llama_layer->forwardAttention(ctx, (float *)input, actBuffers->Data(), attnOut, attnMask,
+    llama_layer->forwardAttention(ctx, (float *)input, actBuffers.Data(), attnOut, attnMask,
             presentKey, // presentKey,
             presentValue, // presentValue,
             inputSeqLen, // inputSeqLen,
@@ -149,7 +147,7 @@ void LayerLLaMAWrapper(DataType dt, ActivationType at, NormType nt, int batchSiz
         const float *ln1Gamma, const float *ln1Beta, const void *queryWeight, const void *keyWeight,
         const void *valueWeight, const void *attnOutWeight, const float *ln2Gamma, const float *ln2Beta,
         const void *gateWeight, const void *upWeight, const void *downWeight, const float *queryBias,
-        const float *keyBias, const float *valueBias, const float *attnOutBias) {
+        const float *keyBias, const float *valueBias, const float *attnOutBias,const void *myqkvWeight=nullptr) {
     static std::mutex mutex;
     std::lock_guard<std::mutex> lock(mutex);
 
@@ -172,7 +170,7 @@ void LayerLLaMAWrapper(DataType dt, ActivationType at, NormType nt, int batchSiz
     if (ctx == nullptr
             || (ctx != nullptr && (ctx->hiddenSize != hiddenSize || ctx->intermediateSize != intermediateSize))) {
         if (ctx != nullptr) delete ctx;
-        printf(">> create context: %d %d\n", hiddenSize, intermediateSize);
+        // printf(">> create context: %d %d\n", hiddenSize, intermediateSize);
         mmHelper = new MMHelper(Env::getInstance().getEngineKind(), Env::getInstance().getEngineIndex());
         ctx = new DecoderContext(1, hiddenSize, attHeadDim, attHeadNum, kvHeadNum, intermediateSize, actType, 1e-6, 0,
                 0, maxPositions, maxPosEmbed, -1, 0, 1, mmHelper);
@@ -197,7 +195,7 @@ void LayerLLaMAWrapper(DataType dt, ActivationType at, NormType nt, int batchSiz
         int headsPerSplit = (ctx->kvHeadNum + workers - 1) / workers;
         kvCacheMgr->resize(maxPositions, batchSize, headsPerSplit, attHeadDim);
         kv_hub[kv_hub_key] = kvCacheMgr;
-        printf(">> create kv_hub_key: %s\n", kv_hub_key.c_str());
+        // printf(">> create kv_hub_key: %s\n", kv_hub_key.c_str());
         xft_set_preferred_node(-1);
     } else {
         kvCacheMgr = it_created->second;
@@ -209,13 +207,13 @@ void LayerLLaMAWrapper(DataType dt, ActivationType at, NormType nt, int batchSiz
                     maxPositions, maxPosEmbed, pastSeqLen, currentSeqLen, step, hiddenSize, intermediateSize, output,
                     outputStride, input, inputStride, ln1Gamma, ln1Beta, queryWeight, keyWeight, valueWeight,
                     attnOutWeight, ln2Gamma, ln2Beta, gateWeight, upWeight, downWeight, queryBias, keyBias, valueBias,
-                    attnOutBias, mmHelper, ctx, kvCacheMgr);
+                    attnOutBias, mmHelper, ctx, kvCacheMgr,myqkvWeight);
         } else if (nt == NormType::LN) {
             LayerLLaMAImpl<bfloat16_t, KVCacheT, RopeT, LayerNorm>(dt, at, nt, batchSize, inputSeqLen, attHeadDim, attHeadNum, kvHeadNum,
                     maxPositions, maxPosEmbed, pastSeqLen, currentSeqLen, step, hiddenSize, intermediateSize, output,
                     outputStride, input, inputStride, ln1Gamma, ln1Beta, queryWeight, keyWeight, valueWeight,
                     attnOutWeight, ln2Gamma, ln2Beta, gateWeight, upWeight, downWeight, queryBias, keyBias, valueBias,
-                    attnOutBias, mmHelper, ctx, kvCacheMgr);
+                    attnOutBias, mmHelper, ctx, kvCacheMgr,myqkvWeight);
         } else {
             printf(">> unsupported norm type\n");
         }
@@ -225,13 +223,13 @@ void LayerLLaMAWrapper(DataType dt, ActivationType at, NormType nt, int batchSiz
                     maxPositions, maxPosEmbed, pastSeqLen, currentSeqLen, step, hiddenSize, intermediateSize, output,
                     outputStride, input, inputStride, ln1Gamma, ln1Beta, queryWeight, keyWeight, valueWeight,
                     attnOutWeight, ln2Gamma, ln2Beta, gateWeight, upWeight, downWeight, queryBias, keyBias, valueBias,
-                    attnOutBias, mmHelper, ctx, kvCacheMgr);
+                    attnOutBias, mmHelper, ctx, kvCacheMgr,myqkvWeight);
         } else if (nt == NormType::LN) {
             LayerLLaMAImpl<float16_t, KVCacheT, RopeT, LayerNorm>(dt, at, nt, batchSize, inputSeqLen, attHeadDim, attHeadNum, kvHeadNum,
                     maxPositions, maxPosEmbed, pastSeqLen, currentSeqLen, step, hiddenSize, intermediateSize, output,
                     outputStride, input, inputStride, ln1Gamma, ln1Beta, queryWeight, keyWeight, valueWeight,
                     attnOutWeight, ln2Gamma, ln2Beta, gateWeight, upWeight, downWeight, queryBias, keyBias, valueBias,
-                    attnOutBias, mmHelper, ctx, kvCacheMgr);
+                    attnOutBias, mmHelper, ctx, kvCacheMgr,myqkvWeight);
         } else {
             printf(">> unsupported norm type\n");
         }
@@ -244,14 +242,14 @@ void LayerLLaMAWrapper(DataType dt, ActivationType at, NormType nt, int batchSiz
                         maxPositions, maxPosEmbed, pastSeqLen, currentSeqLen, step, hiddenSize, intermediateSize, output,
                         outputStride, input, inputStride, ln1Gamma, ln1Beta, queryWeight, keyWeight, valueWeight,
                         attnOutWeight, ln2Gamma, ln2Beta, gateWeight, upWeight, downWeight, queryBias, keyBias, valueBias,
-                        attnOutBias, mmHelper, ctx, kvCacheMgr);
+                        attnOutBias, mmHelper, ctx, kvCacheMgr,myqkvWeight);
 
             } else {
                     nextTokenFunc(dt, at, nt, batchSize, inputSeqLen, attHeadDim, attHeadNum, kvHeadNum,
                         maxPositions, maxPosEmbed, pastSeqLen, currentSeqLen, step, hiddenSize, intermediateSize, output,
                         outputStride, input, inputStride, ln1Gamma, ln1Beta, queryWeight, keyWeight, valueWeight,
                         attnOutWeight, ln2Gamma, ln2Beta, gateWeight, upWeight, downWeight, queryBias, keyBias, valueBias,
-                        attnOutBias, mmHelper, ctx, kvCacheMgr);
+                        attnOutBias, mmHelper, ctx, kvCacheMgr,myqkvWeight);
             }
         } else if (nt == NormType::LN) {
             auto firstTokenFunc = LayerLLaMAImpl<bfloat16_t, KVCacheT, RopeT, LayerNorm>;
@@ -261,13 +259,13 @@ void LayerLLaMAWrapper(DataType dt, ActivationType at, NormType nt, int batchSiz
                         maxPositions, maxPosEmbed, pastSeqLen, currentSeqLen, step, hiddenSize, intermediateSize, output,
                         outputStride, input, inputStride, ln1Gamma, ln1Beta, queryWeight, keyWeight, valueWeight,
                         attnOutWeight, ln2Gamma, ln2Beta, gateWeight, upWeight, downWeight, queryBias, keyBias, valueBias,
-                        attnOutBias, mmHelper, ctx, kvCacheMgr);
+                        attnOutBias, mmHelper, ctx, kvCacheMgr,myqkvWeight);
             else
                     nextTokenFunc(dt, at, nt, batchSize, inputSeqLen, attHeadDim, attHeadNum, kvHeadNum,
                         maxPositions, maxPosEmbed, pastSeqLen, currentSeqLen, step, hiddenSize, intermediateSize, output,
                         outputStride, input, inputStride, ln1Gamma, ln1Beta, queryWeight, keyWeight, valueWeight,
                         attnOutWeight, ln2Gamma, ln2Beta, gateWeight, upWeight, downWeight, queryBias, keyBias, valueBias,
-                        attnOutBias, mmHelper, ctx, kvCacheMgr);
+                        attnOutBias, mmHelper, ctx, kvCacheMgr,myqkvWeight);
         } else {
             printf(">> unsupported norm type\n");
         }
@@ -282,7 +280,8 @@ void invokeLayerLLaMA(DataType dt, DataType kvcdt, RopeType rt, ActivationType a
         const float *ln1Gamma, const float *ln1Beta, const void *queryWeight, const void *keyWeight,
         const void *valueWeight, const void *attnOutWeight, const float *ln2Gamma, const float *ln2Beta,
         const void *gateWeight, const void *upWeight, const void *downWeight, const float *queryBias,
-        const float *keyBias, const float *valueBias, const float *attnOutBias) {
+        const float *keyBias, const float *valueBias, const float *attnOutBias, const void *myqkvWeight ,
+        const float *gateBias , const float *upBias , const float *downBias, const float *myqkvBias) {
 
     if (kvcdt == DataType::fp16) {
         if (rt == RopeType::LLAMA_ROPE)
@@ -290,7 +289,7 @@ void invokeLayerLLaMA(DataType dt, DataType kvcdt, RopeType rt, ActivationType a
                 attHeadNum, kvHeadNum, maxPositions, maxPosEmbed, pastSeqLen, currentSeqLen, step,
                 hiddenSize, intermediateSize, output, outputStride, input, inputStride,
                 ln1Gamma, ln1Beta, queryWeight, keyWeight, valueWeight, attnOutWeight, ln2Gamma, ln2Beta,
-                gateWeight, upWeight, downWeight, queryBias, keyBias, valueBias, attnOutBias) ;
+                gateWeight, upWeight, downWeight, queryBias, keyBias, valueBias, attnOutBias,myqkvWeight) ;
         else {
             printf(">> unsupported Rope type: %d\n", rt);
         }
@@ -300,7 +299,7 @@ void invokeLayerLLaMA(DataType dt, DataType kvcdt, RopeType rt, ActivationType a
                 attHeadNum, kvHeadNum, maxPositions, maxPosEmbed, pastSeqLen, currentSeqLen, step,
                 hiddenSize, intermediateSize, output, outputStride, input, inputStride,
                 ln1Gamma, ln1Beta, queryWeight, keyWeight, valueWeight, attnOutWeight, ln2Gamma, ln2Beta,
-                gateWeight, upWeight, downWeight, queryBias, keyBias, valueBias, attnOutBias) ;
+                gateWeight, upWeight, downWeight, queryBias, keyBias, valueBias, attnOutBias,myqkvWeight) ;
         else {
             printf(">> unsupported Rope type: %d\n", rt);
         }
